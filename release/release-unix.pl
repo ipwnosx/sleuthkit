@@ -158,8 +158,8 @@ sub update_configver {
 
     my $found = 0;
     while (<CONF_IN>) {
-        if (/^AC_INIT\(sleuthkit/) {
-            print CONF_OUT "AC_INIT(sleuthkit, $VER)\n";
+        if (/^AC_INIT\(\[sleuthkit/) {
+            print CONF_OUT "AC_INIT([sleuthkit], [$VER])\n";
             $found++;
         }
         else {
@@ -278,8 +278,8 @@ sub update_libver {
 
     print "Updating Unix API version\n";
 
-    print "\nGit History for tsk/Makefile.am:\n";
-    exec_pipe(*OUT, "git log -- --pretty=short tsk/Makefile.am | head -12");
+    print "\nGit History for Makefile.am:\n";
+    exec_pipe(*OUT, "git log -- --pretty=short Makefile.am | head -12");
     my $foo = read_pipe_line(*OUT);
     while ($foo ne "") {
         print "$foo";
@@ -295,7 +295,7 @@ sub update_libver {
     }
     return if ($a eq "n");
 
-    exec_pipe(*OUT, "cat tsk/Makefile.am | grep version\-info");
+    exec_pipe(*OUT, "cat Makefile.am | grep version\-info");
     print "Current Makefile Contents: " . read_pipe_line(*OUT) . "\n";
     close (OUT);
 
@@ -304,7 +304,7 @@ sub update_libver {
     my $rev;
     my $age;
     while (1) {
-        $a = prompt_user("Enter library version used in last release (from tsk/Makefile.am)");
+        $a = prompt_user("Enter library version used in last release (from Makefile.am)");
         if ($a =~ /(\d+):(\d+):(\d+)/) {
             $cur = $1;
             $rev = $2;
@@ -341,8 +341,8 @@ sub update_libver {
         }
     }
 
-    my $IFILE = "tsk/Makefile.am";
-    my $OFILE = "tsk/Makefile.am2";
+    my $IFILE = "Makefile.am";
+    my $OFILE = "Makefile.am2";
 
     open (CONF_IN, "<${IFILE}") or 
         die "Cannot open $IFILE";
@@ -351,7 +351,7 @@ sub update_libver {
 
     my $found = 0;
     while (<CONF_IN>) {
-        if (/^(libtsk.*?version\-info )\d+:\d+:\d+(.*?)$/) {
+        if (/^(tsk_libtsk.*?version\-info )\d+:\d+:\d+(.*?)$/) {
             if ($irem eq "y") {
                 $cur++;
                 $rev = 0;
@@ -682,7 +682,7 @@ sub verify_tar {
     die "Missing configure in tar file" unless (-e "./configure");
 
     print "Running configure\n";
-    system ("./configure > /dev/null");
+    system ("./configure --enable-java > /dev/null");
     die "Error running configure in tar file" unless (-e "./Makefile");
 
     print "Running make\n";
@@ -690,7 +690,6 @@ sub verify_tar {
     die "Error compiling tar file (tools/fstools/fls not found)" unless (-x "tools/fstools/fls");
 
     print "Testing Test\n";
-    chdir "tests" or die "Error changing directories to test";
     system ("make check > /dev/null");
     die "Error compiling tests (tests/read_apis not found)" unless (-x "read_apis");
     chdir "..";

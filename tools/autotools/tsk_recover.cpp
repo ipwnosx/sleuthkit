@@ -1,6 +1,6 @@
 /*
  ** tsk_recover
- ** The Sleuth Kit 
+ ** The Sleuth Kit
  **
  ** Brian Carrier [carrier <at> sleuthkit [dot] org]
  ** Copyright (c) 2010-2011 Brian Carrier.  All Rights reserved
@@ -19,10 +19,8 @@ static TSK_TCHAR *progname;
 static void
 usage()
 {
-    TFPRINTF(stderr,
-        _TSK_T
-        ("usage: %" PRIttocTSK " [-vVae] [-f fstype] [-i imgtype] [-b dev_sector_size] [-o sector_offset] [-P pooltype] [-B pool_volume_block] [-d dir_inum] image [image] output_dir\n"),
-        progname);
+    tsk_fprintf(stderr,
+        "usage: tsk_recover [-vVae] [-f fstype] [-i imgtype] [-b dev_sector_size] [-o sector_offset] [-P pooltype] [-B pool_volume_block] [-d dir_inum] image [image] output_dir\n");
     tsk_fprintf(stderr,
         "\t-i imgtype: The format of the image file (use '-i list' for supported types)\n");
     tsk_fprintf(stderr,
@@ -40,11 +38,23 @@ usage()
         "\t-P pooltype: Pool container type (use '-P list' for supported types)\n");
     tsk_fprintf(stderr,
         "\t-B pool_volume_block: Starting block (for pool volumes only)\n");
-    tsk_fprintf(stderr, 
+    tsk_fprintf(stderr,
         "\t-d dir_inum: Directory inum to recover from (must also specify a specific partition using -o or there must not be a volume system)\n");
+    tsk_fprintf(stderr, "\t-k password: Decryption password for encrypted volumes\n");
 
     exit(1);
 }
+
+
+// special characters we do not want to have in the name when writing out. 
+#ifdef TSK_WIN32
+#define TSK_IS_SPL_FILE_CHAR(x) \
+    (((x) == 0x3A) || ((x) == 0x5C))
+#else
+#define TSK_IS_SPL_FILE_CHAR(x) \
+    ((x) == 0x2F) 
+#endif
+
 
 #ifdef TSK_WIN32
 #include <windows.h>
@@ -58,10 +68,10 @@ public:
     virtual TSK_RETVAL_ENUM processFile(TSK_FS_FILE * fs_file, const char *path);
     virtual TSK_FILTER_ENUM filterVol(const TSK_VS_PART_INFO * vs_part);
     virtual TSK_FILTER_ENUM filterFs(TSK_FS_INFO * fs_info);
-    uint8_t openFs(TSK_OFF_T a_soffset, TSK_FS_TYPE_ENUM fstype, TSK_POOL_TYPE_ENUM pooltype, TSK_DADDR_T pvol_block);
+    uint8_t openFs(TSK_OFF_T a_soffset, TSK_FS_TYPE_ENUM fstype, TSK_POOL_TYPE_ENUM pooltype, TSK_DADDR_T pvol_block, const char* password);
     uint8_t findFiles(TSK_INUM_T a_dirInum);
     uint8_t handleError();
-    
+
 private:
     TSK_TCHAR * m_base_dir;
     uint8_t writeFile(TSK_FS_FILE * a_fs_file, const char *a_path);
@@ -85,19 +95,24 @@ TskRecover::TskRecover(TSK_TCHAR * a_base_dir)
 }
 
 // Print errors as they are encountered
-uint8_t TskRecover::handleError() 
+uint8_t TskRecover::handleError()
 {
     fprintf(stderr, "%s", tsk_error_get());
     return 0;
-} 
+}
 
 /** \internal
  * Callback used to walk file content and write the results to the recovery file.
  */
 static TSK_WALK_RET_ENUM
-file_walk_cb(TSK_FS_FILE * a_fs_file, TSK_OFF_T a_off,
-    TSK_DADDR_T a_addr, char *a_buf, size_t a_len,
-    TSK_FS_BLOCK_FLAG_ENUM a_flags, void *a_ptr)
+file_walk_cb(
+  [[maybe_unused]] TSK_FS_FILE * a_fs_file,
+  [[maybe_unused]] TSK_OFF_T a_off,
+  [[maybe_unused]] TSK_DADDR_T a_addr,
+  char *a_buf,
+  size_t a_len,
+  [[maybe_unused]] TSK_FS_BLOCK_FLAG_ENUM a_flags,
+  void *a_ptr)
 {
     //write to the file
 #ifdef TSK_WIN32
@@ -123,21 +138,33 @@ file_walk_cb(TSK_FS_FILE * a_fs_file, TSK_OFF_T a_off,
  */
 uint8_t TskRecover::writeFile(TSK_FS_FILE * a_fs_file, const char *a_path)
 {
-    
+
 #ifdef TSK_WIN32
-    /* Step 1 is to make the full path in UTF-16 and create the 
+    /* Step 1 is to make the full path in UTF-16 and create the
      * needed directories. */
-    
+
     // combine the volume name and path
     char path8[FILENAME_MAX];
     strncpy(path8, m_vsName, FILENAME_MAX);
-    strncat(path8, a_path, FILENAME_MAX-strlen(path8)); 
+    strncat(path8, a_path, FILENAME_MAX-strlen(path8));
     size_t ilen = strlen(path8);
-    
+
     // clean up any control characters
     for (size_t i = 0; i < ilen; i++) {
-        if (TSK_IS_CNTRL(path8[i]))
+        if (TSK_IS_CNTRL(path8[i])) {
             path8[i] = '^';
+        }
+
+        if (path8[i] == '/')
+            path8[i] = '\\';
+
+        // make sure there is no \..\ path traversal
+        if (i + 4 < ilen) {
+            if ((path8[i] == '\\') && (path8[i+1] == '.') && (path8[i+2] == '.') && (path8[i+3] == '\\')) {
+                path8[i+1] = '^';
+                path8[i+2] = '^';
+            }
+        }
     }
 
     //convert path from utf8 to utf16
@@ -169,6 +196,8 @@ uint8_t TskRecover::writeFile(TSK_FS_FILE * a_fs_file, const char *a_path)
     for (size_t i = 0; i < len; i++) {
         if (path16full[i] == L'/')
             path16full[i] = L'\\';
+
+        // break at path seperator to make that directory
         if (((i > 0) && (path16full[i] == L'\\') && (path16full[i - 1] != L'\\'))
             || ((path16full[i] != L'\\') && (i == len - 1))) {
             uint8_t
@@ -195,22 +224,24 @@ uint8_t TskRecover::writeFile(TSK_FS_FILE * a_fs_file, const char *a_path)
         path16full[len] = L'\\';
 
     //do name mangling
-    char name8[FILENAME_MAX];
+    char name8[FILENAME_MAX + 1];
     strncpy(name8, a_fs_file->name->name, FILENAME_MAX);
     for (int i = 0; name8[i] != '\0'; i++) {
-        if (TSK_IS_CNTRL(name8[i]))
+        //make sure there is no slash, which could lead to path traversal
+        if (TSK_IS_CNTRL(name8[i]) || TSK_IS_SPL_FILE_CHAR(name8[i])) {
             name8[i] = '^';
+        }
     }
 
     //convert file name from utf8 to utf16
-    wchar_t name16[FILENAME_MAX];
+    wchar_t name16[FILENAME_MAX + 1];
 
     ilen = strlen(name8);
     utf8 = (UTF8 *) name8;
     utf16 = (UTF16 *) name16;
 
     retVal = tsk_UTF8toUTF16((const UTF8 **) &utf8, &utf8[ilen],
-        &utf16, &utf16[FILENAME_MAX], TSKlenientConversion);
+        &utf16, &utf16[FILENAME_MAX + 1], TSKlenientConversion);
     *utf16 = '\0';
 
     if (retVal != TSKconversionOK) {
@@ -219,7 +250,7 @@ uint8_t TskRecover::writeFile(TSK_FS_FILE * a_fs_file, const char *a_path)
     }
 
     //append the file name onto the path
-    wcsncat(path16full, name16, FILENAME_MAX-wcslen(path16full));
+    wcsncat(path16full, name16, FILENAME_MAX + 1 - wcslen(path16full));
 
     //create the file
     HANDLE
@@ -250,20 +281,33 @@ uint8_t TskRecover::writeFile(TSK_FS_FILE * a_fs_file, const char *a_path)
     FILE *
         hFile;
 
-    snprintf(fbuf, PATH_MAX, "%s/%s/%s", (char *) m_base_dir, m_vsName,
-        a_path);
+    const int ret = snprintf(fbuf, PATH_MAX, "%s/%s/%s", (char *) m_base_dir, m_vsName, a_path);
+    if (ret >= PATH_MAX) {
+        fprintf(stderr, "Error: path '%s/%s/%s' truncated\n", (char *) m_base_dir, m_vsName, a_path);
+        return 1;
+    }
 
     // clean up any control characters in path
     for (size_t i = 0; i < strlen(fbuf); i++) {
         if (TSK_IS_CNTRL(fbuf[i]))
             fbuf[i] = '^';
+
+        // make sure there is no /../ path traversal 
+        if (i + 4 < strlen(fbuf)) {
+            if ((fbuf[i] == '/') && (fbuf[i+1] == '.') && (fbuf[i+2] == '.') && (fbuf[i+3] == '/')) {
+                fbuf[i+1] = '^';
+                fbuf[i+2] = '^';
+            }
+        }
     }
-    
+
     // see if the directory already exists. Create, if not.
+    // and all of the missing layers
     if (0 != lstat(fbuf, &statds)) {
         size_t
             len = strlen(fbuf);
         for (size_t i = 0; i < len; i++) {
+            // stop if we are at a path separator to make that folder
             if (((i > 0) && (fbuf[i] == '/') && (fbuf[i - 1] != '/'))
                 || ((fbuf[i] != '/') && (i == len - 1))) {
                 uint8_t
@@ -290,14 +334,16 @@ uint8_t TskRecover::writeFile(TSK_FS_FILE * a_fs_file, const char *a_path)
     if (fbuf[strlen(fbuf) - 1] != '/')
         strncat(fbuf, "/", PATH_MAX - strlen(fbuf)-1);
 
+    int nstart = strlen(fbuf);
     strncat(fbuf, a_fs_file->name->name, PATH_MAX - strlen(fbuf)-1);
-    
+
     //do name mangling of the file name that was just added
-    for (int i = strlen(fbuf)-1; fbuf[i] != '/'; i--) {
-        if (TSK_IS_CNTRL(fbuf[i]))
+    for (int i = nstart; fbuf[i] != '\0'; i++) {
+        // need to make sure it doesn't have any slashes in it, which could lead 
+        // to path traversal
+        if (TSK_IS_CNTRL(fbuf[i]) || TSK_IS_SPL_FILE_CHAR(fbuf[i]))
             fbuf[i] = '^';
     }
-
 
     // open the file
     if ((hFile = fopen(fbuf, "w+")) == NULL) {
@@ -365,11 +411,11 @@ TskRecover::filterFs(TSK_FS_INFO * fs_info)
 }
 
 uint8_t
-TskRecover::openFs(TSK_OFF_T a_soffset, TSK_FS_TYPE_ENUM fstype, TSK_POOL_TYPE_ENUM pooltype, TSK_DADDR_T pvol_block)
+TskRecover::openFs(TSK_OFF_T a_soffset, TSK_FS_TYPE_ENUM fstype, TSK_POOL_TYPE_ENUM pooltype, TSK_DADDR_T pvol_block, const char* password)
 {
     if (pvol_block == 0) {
         if ((m_fs_info = tsk_fs_open_img_decrypt(m_img_info, a_soffset * m_img_info->sector_size,
-            fstype, "")) == NULL) {
+            fstype, password)) == NULL) {
             tsk_error_print(stderr);
             if (tsk_error_get_errno() == TSK_ERR_FS_UNSUPTYPE)
                 tsk_fs_type_print(stderr);
@@ -386,7 +432,7 @@ TskRecover::openFs(TSK_OFF_T a_soffset, TSK_FS_TYPE_ENUM fstype, TSK_POOL_TYPE_E
         }
 
         m_img_info = pool->get_img_info(pool, pvol_block);
-        if ((m_fs_info = tsk_fs_open_img_decrypt(m_img_info, a_soffset * m_img_info->sector_size, fstype, "")) == NULL) {
+        if ((m_fs_info = tsk_fs_open_img_decrypt(m_img_info, a_soffset * m_img_info->sector_size, fstype, password)) == NULL) {
             tsk_error_print(stderr);
             if (tsk_error_get_errno() == TSK_ERR_FS_UNSUPTYPE)
                 tsk_fs_type_print(stderr);
@@ -423,6 +469,7 @@ main(int argc, char **argv1)
     TSK_TCHAR *cp;
     TSK_FS_DIR_WALK_FLAG_ENUM walkflag = TSK_FS_DIR_WALK_FLAG_UNALLOC;
     TSK_INUM_T dirInum = 0;
+    const char* password = "";
 
 #ifdef TSK_WIN32
     // On Windows, get the wide arguments (mingw doesn't support wmain)
@@ -438,18 +485,19 @@ main(int argc, char **argv1)
     progname = argv[0];
     setlocale(LC_ALL, "");
 
-    while ((ch = GETOPT(argc, argv, _TSK_T("ab:B:d:ef:i:o:P:vV"))) > 0) {
+    while ((ch = GETOPT(argc, argv, _TSK_T("ab:B:d:ef:i:k:o:P:vV"))) > 0) {
         switch (ch) {
         case _TSK_T('?'):
         default:
             TFPRINTF(stderr, _TSK_T("Invalid argument: %" PRIttocTSK "\n"),
                 argv[OPTIND]);
             usage();
+            break;
 
         case _TSK_T('a'):
             walkflag = TSK_FS_DIR_WALK_FLAG_ALLOC;
             break;
-            
+
         case _TSK_T('b'):
             ssize = (unsigned int) TSTRTOUL(OPTARG, &cp, 0);
             if (*cp || *cp == *OPTARG || ssize < 1) {
@@ -460,7 +508,7 @@ main(int argc, char **argv1)
                 usage();
             }
             break;
-                
+
         case _TSK_T('d'):
             if (tsk_fs_parse_inum(OPTARG, &dirInum, NULL, NULL, NULL, NULL)) {
                 TFPRINTF(stderr,
@@ -475,7 +523,7 @@ main(int argc, char **argv1)
             (TSK_FS_DIR_WALK_FLAG_ENUM) (TSK_FS_DIR_WALK_FLAG_UNALLOC |
                                          TSK_FS_DIR_WALK_FLAG_ALLOC);
             break;
-                
+
         case _TSK_T('f'):
             if (TSTRCMP(OPTARG, _TSK_T("list")) == 0) {
                 tsk_fs_type_print(stderr);
@@ -502,7 +550,7 @@ main(int argc, char **argv1)
                 usage();
             }
             break;
-                
+
         case _TSK_T('o'):
             if ((soffset = tsk_parse_offset(OPTARG)) == -1) {
                 tsk_error_print(stderr);
@@ -530,6 +578,10 @@ main(int argc, char **argv1)
             }
             break;
 
+        case _TSK_T('k'):
+            password = argv1[OPTIND - 1];
+            break;
+
         case _TSK_T('v'):
             tsk_verbose++;
             break;
@@ -548,15 +600,16 @@ main(int argc, char **argv1)
     }
 
     TskRecover tskRecover(argv[argc-1]);
+    tskRecover.setFileSystemPassword(password);
 
-    tskRecover.setFileFilterFlags(walkflag);    
+    tskRecover.setFileFilterFlags(walkflag);
     if (tskRecover.openImage(argc - OPTIND - 1, &argv[OPTIND], imgtype,
             ssize)) {
         tsk_error_print(stderr);
         exit(1);
     }
-    
-    if (tskRecover.openFs(soffset, fstype, pooltype, (TSK_DADDR_T)pvol_block)) {
+
+    if (tskRecover.openFs(soffset, fstype, pooltype, (TSK_DADDR_T)pvol_block, password)) {
         // Errors were already logged
         exit(1);
     }

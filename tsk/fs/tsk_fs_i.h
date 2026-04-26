@@ -206,13 +206,17 @@ extern "C" {
         TSK_FS_TYPE_ENUM, const char*, uint8_t);
     extern TSK_FS_INFO *yaffs2_open(TSK_IMG_INFO *, TSK_OFF_T,
         TSK_FS_TYPE_ENUM, const char*, uint8_t);
-	extern TSK_FS_INFO *logical_fs_open(TSK_IMG_INFO *);
+    extern TSK_FS_INFO *xfs_open(TSK_IMG_INFO *, TSK_OFF_T,
+        TSK_FS_TYPE_ENUM, const char*, uint8_t);
+    extern TSK_FS_INFO *logical_fs_open(TSK_IMG_INFO *);
 
     /* Specific pool file system routines */
     extern TSK_FS_INFO *apfs_open_auto_detect(TSK_IMG_INFO*, TSK_OFF_T,
         TSK_FS_TYPE_ENUM, const char*, uint8_t);
     extern TSK_FS_INFO *apfs_open(TSK_IMG_INFO*, TSK_OFF_T,
         TSK_FS_TYPE_ENUM, const char*);
+    extern TSK_FS_INFO *btrfs_open(TSK_IMG_INFO*, TSK_OFF_T,
+        TSK_FS_TYPE_ENUM, const char *, uint8_t);
 
     /* Generic functions for swap and raw -- many say "not supported" */
     extern uint8_t tsk_fs_nofs_fsstat(TSK_FS_INFO * fs, FILE * hFile);
@@ -300,3 +304,26 @@ extern "C" {
 }
 #endif                          /*  */
 #endif                          /*  */
+
+    /* FFS specific functions */
+    extern uint8_t ffs_inode_walk(TSK_FS_INFO * fs,
+        TSK_INUM_T a_start_inum, TSK_INUM_T a_end_inum,
+        TSK_FS_META_FLAG_ENUM a_flags, TSK_FS_META_WALK_CB a_action,
+        void *a_ptr);
+
+    extern uint8_t ffs_block_walk(TSK_FS_INFO * fs,
+        TSK_DADDR_T a_start_blk, TSK_DADDR_T a_end_blk,
+        TSK_FS_BLOCK_WALK_FLAG_ENUM a_flags,
+        TSK_FS_BLOCK_WALK_CB a_action, void *a_ptr);
+
+    extern TSK_FS_BLOCK_FLAG_ENUM ffs_block_getflags(TSK_FS_INFO * a_fs,
+        TSK_DADDR_T a_addr);
+
+    extern uint8_t ffs_jentry_walk(TSK_FS_INFO * a_fs,
+        int a_flags, TSK_FS_JENTRY_WALK_CB a_action, void *a_ptr);
+
+    extern uint8_t ffs_jblk_walk(TSK_FS_INFO * a_fs,
+        TSK_INUM_T start, TSK_INUM_T end, int a_flags,
+        TSK_FS_JBLK_WALK_CB a_action, void *a_ptr);
+
+    extern uint8_t ffs_jopen(TSK_FS_INFO * a_fs, TSK_INUM_T inum);
